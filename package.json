@@ -1,0 +1,29 @@
+{
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.2.1",
+    "request-ip": "^3.3.0",
+    "ws": "^8.18.3"
+  },
+  "name": "root-relay",
+  "version": "1.0.0",
+  "description": "Relay server for ROOT",
+  "main": "server.js",
+  "devDependencies": {},
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/therealPaulPlay/root-relay.git"
+  },
+  "keywords": [
+    "privacy",
+    "home",
+    "security"
+  ],
+  "author": "PaulPlay",
+  "license": "GPL-3.0"
+}
