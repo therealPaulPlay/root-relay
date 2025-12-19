@@ -41,7 +41,7 @@ const productIdClients = new Map(); // product ID -> [clientIdArray] (for connec
 
 async function initWebSocketServer(server) {
     try {
-        const wss = new WebSocketServer({ server, maxPayload: 16 * 1024 * 1024 }); // 16 MB
+        const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 16 * 1024 * 1024 }); // 16 MB
 
         // Start heartbeat
         const heartbeatInterval = setInterval(() => {
