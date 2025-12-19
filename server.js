@@ -77,14 +77,14 @@ async function initWebSocketServer(server) {
             ws.on('pong', () => { ws.isAlive = true; });
 
             ws.on("message", (msg) => {
-                // Rate limiting: 75 messages per second
+                // Rate limiting: 25 messages per second
                 const now = Date.now();
                 if (now - ws.messageWindow > 1000) {
                     ws.messageWindow = now;
                     ws.messageCount = 0;
                 }
                 ws.messageCount++;
-                if (ws.messageCount > 75) {
+                if (ws.messageCount > 25) {
                     if (!ws.isTerminating) {
                         ws.isTerminating = true;
                         ws.close(1008, "Rate limit exceeded");
