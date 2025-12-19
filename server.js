@@ -3,7 +3,7 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import requestIp from "request-ip";
 import cors from "cors";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, WebSocket } from "ws";
 import http from 'node:http';
 import { config } from "./config.js";
 import { randomUUID } from "node:crypto";
@@ -15,15 +15,25 @@ const server = http.createServer(app);
 
 const standardLimiter = rateLimit({
     windowMs: 1000, // 1 second
-    keyGenerator: (req) => req.clientIp, // correct IP
+    keyGenerator: (req) => req.clientIp,
     max: 5, // limit each IP to 5 requests per windowMs
     message: { error: 'Too many standard requests.' }
+});
+
+const upgradeLimiter = rateLimit({
+    windowMs: 1000, // 1 second
+    keyGenerator: (req) => req.clientIp,
+    max: 5, // limit each IP to 5 upgrade requests per second
+    message: { error: 'Too many WebSocket upgrade requests.' }
 });
 
 app.use(cors(config.corsOptions));
 app.use(express.json());
 app.use(requestIp.mw());
-app.use(standardLimiter); // Global rate limiting, also apply to ugprade requests
+app.use((req, res, next) => {
+    if (req.headers.upgrade === 'websocket') return upgradeLimiter(req, res, next); // Apply upgrade limiter to WebSocket upgrade requests
+    return standardLimiter(req, res, next); // Apply standard limiter to others
+});
 
 const clients = {}; // WS clients
 const deviceIdClients = new Map(); // device ID -> [clientIdArray] (for connected devices like phones and laptops)
@@ -45,6 +55,9 @@ async function initWebSocketServer(server) {
         wss.on("connection", (ws, req) => {
             ws.clientId = randomUUID();
             ws.isAlive = true;
+            ws.isTerminating = false;
+            ws.messageCount = 0;
+            ws.messageWindow = Date.now();
 
             const url = new URL(req.url, `http://${req.headers.host}`);
             const deviceId = url.searchParams.get("device-id");
@@ -54,7 +67,8 @@ async function initWebSocketServer(server) {
             if (!deviceId && !productId) return ws.close(1008, "Missing device-id or product-id");
             if (deviceId && productId) return ws.close(1008, "Can't provide both device-id and product-id");
 
-            // Store device or product ID
+            // Store client in clients object and store device or product ID
+            clients[ws.clientId] = ws;
             if (deviceId) deviceIdClients.set(deviceId, [...deviceIdClients.get(deviceId) || [], ws.clientId]);
             if (deviceId) ws.deviceId = deviceId;
             if (productId) productIdClients.set(productId, [...productIdClients.get(productId) || [], ws.clientId]);
@@ -63,6 +77,22 @@ async function initWebSocketServer(server) {
             ws.on('pong', () => { ws.isAlive = true; });
 
             ws.on("message", (msg) => {
+                // Rate limiting: 75 messages per second
+                const now = Date.now();
+                if (now - ws.messageWindow > 1000) {
+                    ws.messageWindow = now;
+                    ws.messageCount = 0;
+                }
+                ws.messageCount++;
+                if (ws.messageCount > 75) {
+                    if (!ws.isTerminating) {
+                        ws.isTerminating = true;
+                        ws.close(1008, "Rate limit exceeded");
+                        console.error(`WebSocket connection ${ws.clientId} closed due to rate limit exceeded.`);
+                    }
+                    return;
+                }
+
                 try {
                     const message = JSON.parse(msg);
                     if (!["device", "product"].includes(message.target)) throw new Error("Message target is invalid!");
@@ -72,7 +102,9 @@ async function initWebSocketServer(server) {
                         const targets = deviceIdClients.get(message.deviceId) || [];
                         targets.forEach((targetClientId) => {
                             const targetWs = clients[targetClientId];
-                            targetWs.send(JSON.stringify(message));
+                            if (targetWs && targetWs.readyState === WebSocket.OPEN) {
+                                targetWs.send(JSON.stringify(message));
+                            }
                         });
 
                     } else if (message.target == "product") {
@@ -80,7 +112,9 @@ async function initWebSocketServer(server) {
                         const targets = productIdClients.get(message.productId) || [];
                         targets.forEach((targetClientId) => {
                             const targetWs = clients[targetClientId];
-                            targetWs.send(JSON.stringify(message));
+                            if (targetWs && targetWs.readyState === WebSocket.OPEN) {
+                                targetWs.send(JSON.stringify(message));
+                            }
                         });
                     }
 
@@ -94,14 +128,14 @@ async function initWebSocketServer(server) {
                 delete clients[ws.clientId];
 
                 if (ws.productId) {
-                    const products = productIdClients.get(ws.productId) || [];
-                    products.filter((e) => e != ws.clientId);
-                    if (!products.length) productIdClients.delete(ws.productId);
+                    const products = (productIdClients.get(ws.productId) || []).filter((e) => e != ws.clientId);
+                    if (products.length === 0) productIdClients.delete(ws.productId);
+                    else productIdClients.set(ws.productId, products);
                 }
                 if (ws.deviceId) {
-                    const devices = deviceIdClients.get(ws.deviceId) || [];
-                    devices.filter((e) => e != ws.deviceId);
-                    if (!devices.length) deviceIdClients.delete(ws.deviceId);
+                    const devices = (deviceIdClients.get(ws.deviceId) || []).filter((e) => e != ws.clientId);
+                    if (devices.length === 0) deviceIdClients.delete(ws.deviceId);
+                    else deviceIdClients.set(ws.deviceId, devices);
                 }
             });
 
@@ -118,10 +152,7 @@ async function initWebSocketServer(server) {
 
 initWebSocketServer(server);
 
-// TODO: rate limit WS messages to 100 msgs / sec
-// TODO: rate limit upgrade endpoint to 5 / sec
-
-app.get("/firmware/observer", standardLimiter, async (req, res) => {
+app.get("/firmware/observer", async (req, res) => {
     try {
         const command = new ListObjectsV2Command({
             Bucket: process.env.S3_BUCKET_NAME,
@@ -132,10 +163,7 @@ app.get("/firmware/observer", standardLimiter, async (req, res) => {
 
         // Filter out folders (keys ending with '/'), only get actual files
         const files = (response.Contents || []).filter(item => !item.Key.endsWith('/'));
-
-        if (files.length === 0) {
-            return res.status(404).json({ error: "No firmware found!" });
-        }
+        if (files.length === 0) return res.status(404).json({ error: "No firmware found!" });
 
         // Get the first file and extract version from filename
         const file = files[0];
