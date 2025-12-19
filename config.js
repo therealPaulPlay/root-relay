@@ -7,5 +7,7 @@ export const config = {
             "http://relay.rootprivacy.com"
         ]
     },
-    port: 3013
+    port: 3013,
+    s3Domain: "digitaloceanspaces.com",
+    s3Region: "fra1"
 }

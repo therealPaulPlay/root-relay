@@ -6,6 +6,7 @@ import { WebSocketServer } from "ws";
 import http from 'node:http';
 import { config } from "./config.js";
 import { randomUUID } from "node:crypto";
+import "dotenv/package";
 
 const app = express();
 const server = http.createServer(app);
@@ -67,15 +68,17 @@ async function initWebSocketServer(server) {
                     if (message.target == "device") {
                         if (!message.deviceId) throw new Error("Message lacks device ID!");
                         const targets = deviceIdClients.get(message.deviceId) || [];
-                        targets.forEach((t) => {
-                            // TODO: Relay message
+                        targets.forEach((targetClientId) => {
+                            const targetWs = clients[targetClientId];
+                            targetWs.send(JSON.stringify(message));
                         });
 
                     } else if (message.target == "product") {
                         if (!message.productId) throw new Error("Message lacks product ID!");
                         const targets = productIdClients.get(message.productId) || [];
-                        targets.forEach((t) => {
-                            // TODO: Relay message
+                        targets.forEach((targetClientId) => {
+                            const targetWs = clients[targetClientId];
+                            targetWs.send(JSON.stringify(message));
                         });
                     }
 
@@ -87,7 +90,7 @@ async function initWebSocketServer(server) {
             ws.on("close", () => {
                 // Remove client ID & remove from maps
                 delete clients[ws.clientId];
-                
+
                 if (ws.productId) {
                     const products = productIdClients.get(ws.productId) || [];
                     products.filter((e) => e != ws.clientId);
@@ -115,6 +118,14 @@ initWebSocketServer(server);
 
 // TODO: rate limit WS messages to 100 msgs / sec
 // TODO: rate limit upgrade endpoint to 5 / sec
+
+app.get("/firmware/camera", (req, res) => {
+
+    // TODO: Return current firmware update from s3 (create firmware folder, pull file, extract version number from file name)
+    // Get file from /rootprivacy/firmware/observer (may not exist)
+    // If it does exist extract version (search for a semver like 1.0.1 or 3.7.32 etc.)
+    // Return URL to firmware + the version for quick comparison
+});
 
 // Health check
 app.get("/health", (req, res) => {
