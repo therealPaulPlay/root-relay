@@ -119,7 +119,7 @@ initWebSocketServer(server);
 // TODO: rate limit WS messages to 100 msgs / sec
 // TODO: rate limit upgrade endpoint to 5 / sec
 
-app.get("/firmware/camera", (req, res) => {
+app.get("/firmware/camera", standardLimiter, (req, res) => {
 
     // TODO: Return current firmware update from s3 (create firmware folder, pull file, extract version number from file name)
     // Get file from /rootprivacy/firmware/observer (may not exist)
