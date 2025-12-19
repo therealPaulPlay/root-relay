@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import rateLimit from "express-rate-limit";
 import requestIp from "request-ip";
@@ -6,7 +7,8 @@ import { WebSocketServer } from "ws";
 import http from 'node:http';
 import { config } from "./config.js";
 import { randomUUID } from "node:crypto";
-import "dotenv/package";
+import { ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { s3Client, getPublicObjectURL } from "./s3Client.js";
 
 const app = express();
 const server = http.createServer(app);
@@ -119,12 +121,37 @@ initWebSocketServer(server);
 // TODO: rate limit WS messages to 100 msgs / sec
 // TODO: rate limit upgrade endpoint to 5 / sec
 
-app.get("/firmware/camera", standardLimiter, (req, res) => {
+app.get("/firmware/observer", standardLimiter, async (req, res) => {
+    try {
+        const command = new ListObjectsV2Command({
+            Bucket: process.env.S3_BUCKET_NAME,
+            Prefix: "rootprivacy/firmware/observer/",
+        });
 
-    // TODO: Return current firmware update from s3 (create firmware folder, pull file, extract version number from file name)
-    // Get file from /rootprivacy/firmware/observer (may not exist)
-    // If it does exist extract version (search for a semver like 1.0.1 or 3.7.32 etc.)
-    // Return URL to firmware + the version for quick comparison
+        const response = await s3Client.send(command);
+
+        // Filter out folders (keys ending with '/'), only get actual files
+        const files = (response.Contents || []).filter(item => !item.Key.endsWith('/'));
+
+        if (files.length === 0) {
+            return res.status(404).json({ error: "No firmware found!" });
+        }
+
+        // Get the first file and extract version from filename
+        const file = files[0];
+        const versionMatch = file.Key.match(/(\d+\.\d+\.\d+)/);
+
+        if (!versionMatch) {
+            return res.status(404).json({ error: "No version found in filename!" });
+        }
+
+        const url = await getPublicObjectURL(file.Key);
+        return res.status(200).json({ version: versionMatch[1], url });
+
+    } catch (error) {
+        console.error("Error fetching firmware:", error);
+        return res.status(500).json({ error: "Failed to fetch firmware" });
+    }
 });
 
 // Health check
