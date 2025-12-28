@@ -152,30 +152,37 @@ async function initWebSocketServer(server) {
 
 initWebSocketServer(server);
 
-const firmwareCache = { version: null, sha256: null };
+const firmwareCache = { version: null, sha256: null, computing: false };
 
 async function getFirmwareChecksum(fileKey, version) {
     if (firmwareCache.version === version && firmwareCache.sha256) {
         return firmwareCache.sha256;
     }
 
-    const response = await s3Client.send(new GetObjectCommand({
-        Bucket: process.env.S3_BUCKET_NAME,
-        Key: fileKey
-    }));
+    if (firmwareCache.computing) return null;
+    firmwareCache.computing = true;
 
-    const checksum = await (async () => {
+    // Log in case issues during checksum creation come up
+    console.log("Computing hash for new firmware version...")
+
+    try {
+        const response = await s3Client.send(new GetObjectCommand({
+            Bucket: process.env.S3_BUCKET_NAME,
+            Key: fileKey
+        }));
+
         const hash = createHash('sha256');
         for await (const chunk of response.Body) {
             hash.update(chunk);
         }
-        return hash.digest('hex');
-    })();
 
-    firmwareCache.version = version;
-    firmwareCache.sha256 = checksum;
+        firmwareCache.version = version;
+        firmwareCache.sha256 = hash.digest('hex');
 
-    return checksum;
+        return null;
+    } finally {
+        firmwareCache.computing = false;
+    }
 }
 
 app.get("/firmware/observer", async (req, res) => {
@@ -201,6 +208,7 @@ app.get("/firmware/observer", async (req, res) => {
 
         const url = await getPublicObjectURL(file.Key);
         const sha256 = await getFirmwareChecksum(file.Key, versionMatch[1]);
+        if (!sha256) return res.status(503).json({ error: "Checksum is being computed, please retry in a moment" });
 
         return res.status(200).json({ version: versionMatch[1], url, sha256 });
 
