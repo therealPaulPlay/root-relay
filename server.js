@@ -6,8 +6,8 @@ import cors from "cors";
 import { WebSocketServer, WebSocket } from "ws";
 import http from 'node:http';
 import { config } from "./config.js";
-import { randomUUID } from "node:crypto";
-import { ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { randomUUID, createHash } from "node:crypto";
+import { ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
 import { s3Client, getPublicObjectURL } from "./s3Client.js";
 
 const app = express();
@@ -152,6 +152,32 @@ async function initWebSocketServer(server) {
 
 initWebSocketServer(server);
 
+const firmwareCache = { version: null, sha256: null };
+
+async function getFirmwareChecksum(fileKey, version) {
+    if (firmwareCache.version === version && firmwareCache.sha256) {
+        return firmwareCache.sha256;
+    }
+
+    const response = await s3Client.send(new GetObjectCommand({
+        Bucket: process.env.S3_BUCKET_NAME,
+        Key: fileKey
+    }));
+
+    const checksum = await (async () => {
+        const hash = createHash('sha256');
+        for await (const chunk of response.Body) {
+            hash.update(chunk);
+        }
+        return hash.digest('hex');
+    })();
+
+    firmwareCache.version = version;
+    firmwareCache.sha256 = checksum;
+
+    return checksum;
+}
+
 app.get("/firmware/observer", async (req, res) => {
     try {
         const command = new ListObjectsV2Command({
@@ -174,7 +200,9 @@ app.get("/firmware/observer", async (req, res) => {
         }
 
         const url = await getPublicObjectURL(file.Key);
-        return res.status(200).json({ version: versionMatch[1], url });
+        const sha256 = await getFirmwareChecksum(file.Key, versionMatch[1]);
+
+        return res.status(200).json({ version: versionMatch[1], url, sha256 });
 
     } catch (error) {
         console.error("Error fetching firmware:", error);
