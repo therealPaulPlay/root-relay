@@ -1,0 +1,47 @@
+name: Deploy Node.js Backend
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy-primary:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Install SSH keys for server
+        run: |
+          install -m 600 -D /dev/null ~/.ssh/id_rsa
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} > ~/.ssh/known_hosts
+
+      - name: Connect to server, build image, and deploy
+        run: |
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
+            cd ${{ secrets.WORK_DIR }}
+
+            # Write .env file from secret
+            echo "${{ secrets.ENV_FILE }}" > .env
+
+            # Pull latest changes from Git
+            git checkout main
+            git pull
+
+            # Build Docker image
+            docker build -t root-relay .
+
+            # Check if container root-relay exists
+            if ! docker ps -a --format '{{.Names}}' | grep -q "^root-relay$"; then
+              echo "Container root-relay does not exist, creating..."
+              docker run -d -p 3013:3013 --network host --restart unless-stopped --name root-relay root-relay
+            else
+              echo "Container root-relay exists, stopping and removing..."
+              docker stop root-relay || true
+              docker rm root-relay || true
+              docker run -d -p 3013:3013 --network host --restart unless-stopped --name root-relay root-relay
+            fi
+          EOF
+
+      - name: Cleanup SSH for server
+        run: rm -rf ~/.ssh
