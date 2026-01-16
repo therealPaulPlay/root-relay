@@ -11,7 +11,7 @@ RUN npm install
 # Bundle app source
 COPY . .
 
-# Informational
+# Same as in the .env
 EXPOSE 3013
 
 CMD [ "node", "server.js" ]

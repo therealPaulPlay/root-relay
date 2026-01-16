@@ -6,33 +6,34 @@ import cors from "cors";
 import { WebSocketServer, WebSocket } from "ws";
 import http from 'node:http';
 import { config } from "./config.js";
-import { randomUUID, createHash } from "node:crypto";
-import { ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
+import { randomUUID } from "node:crypto";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { s3Client, getPublicObjectURL } from "./s3Client.js";
 
 const app = express();
 const server = http.createServer(app);
 
+// 5 requests per second
 const standardLimiter = rateLimit({
-    windowMs: 1000, // 1 second
+    windowMs: 1000,
     keyGenerator: (req) => req.clientIp,
-    max: 5, // limit each IP to 5 requests per windowMs
+    max: 5,
     message: { error: 'Too many standard requests.' }
 });
 
 const upgradeLimiter = rateLimit({
-    windowMs: 1000, // 1 second
+    windowMs: 1000,
     keyGenerator: (req) => req.clientIp,
-    max: 5, // limit each IP to 5 upgrade requests per second
+    max: 5,
     message: { error: 'Too many WebSocket upgrade requests.' }
 });
 
-app.use(cors(config.corsOptions));
+app.use(cors(config.corsOptions)); // Allow requests from the ROOT website
 app.use(express.json());
 app.use(requestIp.mw());
 app.use((req, res, next) => {
-    if (req.headers.upgrade === 'websocket') return upgradeLimiter(req, res, next); // Apply upgrade limiter to WebSocket upgrade requests
-    return standardLimiter(req, res, next); // Apply standard limiter to others
+    if (req.headers.upgrade === 'websocket') return upgradeLimiter(req, res, next); // Apply upgrade rate limiter to WebSocket upgrade requests
+    return standardLimiter(req, res, next); // Apply standard rate limiter to others
 });
 
 const clients = {}; // WS clients
@@ -41,7 +42,7 @@ const productIdClients = new Map(); // product ID -> [clientIdArray] (for connec
 
 async function initWebSocketServer(server) {
     try {
-        const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 4 * 1024 * 1024 }); // 4 MB
+        const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 3 * 1024 * 1024 }); // 3 MB per msg
 
         // Start heartbeat
         const heartbeatInterval = setInterval(() => {
@@ -152,65 +153,63 @@ async function initWebSocketServer(server) {
 
 initWebSocketServer(server);
 
-const firmwareCache = { version: null, sha256: null, computing: false };
-
-async function getFirmwareChecksum(fileKey, version) {
-    if (firmwareCache.version === version && firmwareCache.sha256) {
-        return firmwareCache.sha256;
-    }
-
-    if (firmwareCache.computing) return null;
-    firmwareCache.computing = true;
-
-    // Log in case issues during checksum creation come up
-    console.log("Computing hash for new firmware version...")
-
-    try {
-        const response = await s3Client.send(new GetObjectCommand({
-            Bucket: process.env.S3_BUCKET_NAME,
-            Key: fileKey
-        }));
-
-        const hash = createHash('sha256');
-        for await (const chunk of response.Body) {
-            hash.update(chunk);
-        }
-
-        firmwareCache.version = version;
-        firmwareCache.sha256 = hash.digest('hex');
-
-        return null;
-    } finally {
-        firmwareCache.computing = false;
-    }
-}
+// Cache for firmware metadata (read from S3 latest.json)
+let firmwareMetadataCache = null;
+let firmwareCacheTime = 0;
+const FIRMWARE_CACHE_TTL = 60 * 1000; // 1 minute cache
 
 app.get("/firmware/observer", async (req, res) => {
     try {
-        const command = new ListObjectsV2Command({
-            Bucket: process.env.S3_BUCKET_NAME,
-            Prefix: "rootprivacy/firmware/observer/",
-        });
+        if (process.env.REDIRECT_UPDATES === "false") {
+            // Check cache
+            const now = Date.now();
+            if (firmwareMetadataCache && (now - firmwareCacheTime) < FIRMWARE_CACHE_TTL) {
+                return res.status(200).json(firmwareMetadataCache);
+            }
 
-        const response = await s3Client.send(command);
+            // Fetch latest.json metadata from S3
+            let response;
+            try {
+                response = await s3Client.send(new GetObjectCommand({
+                    Bucket: process.env.S3_BUCKET_NAME,
+                    Key: "rootprivacy/updates/latest.json"
+                }));
+            } catch (err) {
+                if (err.name === "NoSuchKey") return res.status(404).json({ error: "No update file (latest.json is missing)" });
+                throw err;
+            }
 
-        // Filter out folders (keys ending with '/'), only get actual files
-        const files = (response.Contents || []).filter(item => !item.Key.endsWith('/'));
-        if (files.length === 0) return res.status(404).json({ error: "No firmware found!" });
+            const bodyString = await response.Body.transformToString();
+            const metadata = JSON.parse(bodyString);
 
-        // Get the first file and extract version from filename
-        const file = files[0];
-        const versionMatch = file.Key.match(/(\d+\.\d+\.\d+)/);
+            // Build the public URL for the RAUC bundle
+            const bundleUrl = await getPublicObjectURL(`rootprivacy/updates/${metadata.filename}`);
 
-        if (!versionMatch) {
-            return res.status(404).json({ error: "No version found in filename!" });
+            // Build response with RAUC-compatible format
+            const firmwareInfo = {
+                version: metadata.version,
+                url: bundleUrl,
+                sha256: metadata.sha256,
+                size: metadata.size || 0,
+                compatible: metadata.compatible
+            };
+
+            // Update cache
+            firmwareMetadataCache = firmwareInfo;
+            firmwareCacheTime = now;
+
+            return res.status(200).json(firmwareInfo);
+        } else {
+            // Redirect to official relay server
+            const officialDomain = process.env.OFFICIAL_RELAY_DOMAIN;
+            if (!officialDomain) return res.status(500).json({ error: "OFFICIAL_RELAY_DOMAIN not configured" });
+
+            const response = await fetch(`https://${officialDomain}/firmware/observer`);
+            if (!response.ok) return res.status(response.status).json({ error: "Failed to fetch from official relay" });
+
+            const data = await response.json();
+            return res.status(200).json(data);
         }
-
-        const url = await getPublicObjectURL(file.Key);
-        const sha256 = await getFirmwareChecksum(file.Key, versionMatch[1]);
-        if (!sha256) return res.status(503).json({ error: "Checksum is being computed, please retry in a moment" });
-
-        return res.status(200).json({ version: versionMatch[1], url, sha256 });
 
     } catch (error) {
         console.error("Error fetching firmware:", error);
@@ -223,6 +222,6 @@ app.get("/health", (req, res) => {
     return res.status(200).json({ message: "Server is operational." });
 });
 
-server.listen(config.port, () => {
-    console.log(`Server running on port ${config.port}`);
+server.listen(process.env.PORT, () => {
+    console.log(`Server running on port ${process.env.PORT}`);
 });
