@@ -7,7 +7,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import http from 'node:http';
 import { config } from "./config.js";
 import { randomUUID } from "node:crypto";
-import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { s3Client, getPublicObjectURL } from "./s3Client.js";
 
 const app = express();
@@ -158,7 +158,7 @@ let firmwareMetadataCache = null;
 let firmwareCacheTime = 0;
 const FIRMWARE_CACHE_TTL = 60 * 1000; // 1 minute cache
 
-app.get("/firmware/observer", async (req, res) => {
+app.get("/firmware/observer/update", async (req, res) => {
     try {
         if (process.env.REDIRECT_UPDATES === "false") {
             // Check cache
@@ -204,7 +204,7 @@ app.get("/firmware/observer", async (req, res) => {
             const officialDomain = process.env.OFFICIAL_RELAY_DOMAIN;
             if (!officialDomain) return res.status(500).json({ error: "OFFICIAL_RELAY_DOMAIN not configured" });
 
-            const response = await fetch(`https://${officialDomain}/firmware/observer`);
+            const response = await fetch(`https://${officialDomain}/firmware/observer/update`);
             if (!response.ok) return res.status(response.status).json({ error: "Failed to fetch from official relay" });
 
             const data = await response.json();
@@ -214,6 +214,34 @@ app.get("/firmware/observer", async (req, res) => {
     } catch (error) {
         console.error("Error fetching firmware:", error);
         return res.status(500).json({ error: "Failed to fetch firmware" });
+    }
+});
+
+app.get("/firmware/observer/image", async (req, res) => {
+    try {
+        const response = await s3Client.send(new ListObjectsV2Command({
+            Bucket: process.env.S3_BUCKET_NAME,
+            Prefix: "rootprivacy/images/"
+        }));
+
+        const files = (response.Contents || [])
+            .map(obj => obj.Key)
+            .filter(key => key.endsWith(".img.gz"));
+
+        if (files.length === 0) return res.status(404).json({ error: "No firmware image available" });
+
+        const latestKey = files[0];
+        const filename = latestKey.split("/").pop();
+        const imageUrl = await getPublicObjectURL(latestKey);
+
+        return res.status(200).json({
+            url: imageUrl,
+            filename: filename
+        });
+
+    } catch (error) {
+        console.error("Error fetching firmware image URL:", error);
+        return res.status(500).json({ error: "Failed to fetch firmware image" });
     }
 });
 
