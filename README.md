@@ -5,6 +5,9 @@ Relay server for ROOT. Used for relaying end-2-end encrypted data between connec
 
 [![Deploy to DO](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/apps/new?repo=https://github.com/therealPaulPlay/root-relay/tree/main&refcode=65ee4841aa2f)
 
+Once deployed, click "Live App" and you should get redirected to a URL like `https://root-relay-abcd.ondigitalocean.app/`. To verify it's working, test the `/health` route 
+direclty in the browser (simply append it to the URL). You should get a positive response.
+
 ## How to self-host
 
 The easiest way to self-host the relay server is to utilize DigitalOcean's one-click deploy feature. Just click the button above!
