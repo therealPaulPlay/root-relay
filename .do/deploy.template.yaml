@@ -7,5 +7,6 @@ spec:
         repo_clone_url: https://github.com/therealPaulPlay/root-relay
       dockerfile_path: Dockerfile
       instance_count: 1
-      instance_size_slug: basic-xxs
+      instance_size_slug: apps-s-1vcpu-0.5gb
+
 
