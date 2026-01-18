@@ -5,10 +5,12 @@ import requestIp from "request-ip";
 import cors from "cors";
 import { WebSocketServer, WebSocket } from "ws";
 import http from 'node:http';
-import { config } from "./config.js";
 import { randomUUID } from "node:crypto";
 import { GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { s3Client, getPublicObjectURL } from "./s3Client.js";
+
+const PORT = Number(process.env.PORT) || 3013;
+const OFFICIAL_RELAY_DOMAIN = "relay.rootprivacy.com";
 
 const app = express();
 const server = http.createServer(app);
@@ -28,12 +30,19 @@ const upgradeLimiter = rateLimit({
     message: { error: 'Too many WebSocket upgrade requests.' }
 });
 
-app.use(cors(config.corsOptions)); // Allow requests from the ROOT website
+// Allow requests from the ROOT website
+app.use(cors({
+    origin: [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://rootprivacy.com",
+    ]
+}));
 app.use(express.json());
 app.use(requestIp.mw());
 app.use((req, res, next) => {
-    if (req.headers.upgrade === 'websocket') return upgradeLimiter(req, res, next); // Apply upgrade rate limiter to WebSocket upgrade requests
-    return standardLimiter(req, res, next); // Apply standard rate limiter to others
+    if (req.headers.upgrade === 'websocket') return upgradeLimiter(req, res, next);
+    return standardLimiter(req, res, next);
 });
 
 const clients = {}; // WS clients
@@ -42,7 +51,7 @@ const productIdClients = new Map(); // product ID -> [clientIdArray] (for connec
 
 async function initWebSocketServer(server) {
     try {
-        const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 3 * 1024 * 1024 }); // 3 MB per msg
+        const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 3 * 1024 * 1024 }); // 3 MB message size limit
 
         // Start heartbeat
         const heartbeatInterval = setInterval(() => {
@@ -133,6 +142,7 @@ async function initWebSocketServer(server) {
                     if (products.length === 0) productIdClients.delete(ws.productId);
                     else productIdClients.set(ws.productId, products);
                 }
+
                 if (ws.deviceId) {
                     const devices = (deviceIdClients.get(ws.deviceId) || []).filter((e) => e != ws.clientId);
                     if (devices.length === 0) deviceIdClients.delete(ws.deviceId);
@@ -160,12 +170,12 @@ const FIRMWARE_CACHE_TTL = 60 * 1000; // 1 minute cache
 
 app.get("/firmware/observer/update", async (req, res) => {
     try {
+        // If no env variable is provided, the value will not be "false" -> defaults to redirect
         if (process.env.REDIRECT_UPDATES === "false") {
+
             // Check cache
             const now = Date.now();
-            if (firmwareMetadataCache && (now - firmwareCacheTime) < FIRMWARE_CACHE_TTL) {
-                return res.status(200).json(firmwareMetadataCache);
-            }
+            if (firmwareMetadataCache && (now - firmwareCacheTime) < FIRMWARE_CACHE_TTL) return res.status(200).json(firmwareMetadataCache);
 
             // Fetch latest.json metadata from S3
             let response;
@@ -201,10 +211,7 @@ app.get("/firmware/observer/update", async (req, res) => {
             return res.status(200).json(firmwareInfo);
         } else {
             // Redirect to official relay server
-            const officialDomain = process.env.OFFICIAL_RELAY_DOMAIN;
-            if (!officialDomain) return res.status(500).json({ error: "OFFICIAL_RELAY_DOMAIN not configured" });
-
-            const response = await fetch(`https://${officialDomain}/firmware/observer/update`);
+            const response = await fetch(`https://${OFFICIAL_RELAY_DOMAIN}/firmware/observer/update`);
             if (!response.ok) return res.status(response.status).json({ error: "Failed to fetch from official relay" });
 
             const data = await response.json();
@@ -250,6 +257,6 @@ app.get("/health", (req, res) => {
     return res.status(200).json({ message: "Server is operational." });
 });
 
-server.listen(process.env.PORT, () => {
-    console.log(`Server running on port ${process.env.PORT}`);
+server.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
 });
