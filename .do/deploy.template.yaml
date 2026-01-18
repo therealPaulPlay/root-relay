@@ -1,0 +1,8 @@
+spec:
+  name: ROOT Relay
+  services:
+    - name: root-relay-server
+      git:
+        branch: main
+        repo_clone_url: https://github.com/therealPaulPlay/root-relay
+      dockerfile_path: Dockerfile

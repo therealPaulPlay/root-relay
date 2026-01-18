@@ -1,6 +1,12 @@
 # ROOT (Relay)
 Relay server for ROOT. Used for relaying end-2-end encrypted data between connected devices and ROOT products, and enables OTA updates.
 
+## One click deploy
+
+The easiest way to self-host the relay server is to utilize DigitalOcean's one-click deploy feature. Just click the button below!
+
+[![Deploy to DO](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/apps/new?repo=https://github.com/therealPaulPlay/root-relay/tree/main&refcode=65ee4841aa2f)
+
 ## How to self-host
 1. Configure a `.env` file as according to the `.env.example`. If you don't want to host your own updates, leave `REDIRECT_UPDATES` as `"true"`.
 2. Host the application using `Docker`. A `Dockerfile` is provided. 
