@@ -10,7 +10,7 @@ direclty in the browser (simply append it to the URL). You should get a positive
 
 ## How to self-host
 
-The easiest way to self-host the relay server is to utilize DigitalOcean's one-click deploy feature. Just click the button above!
+The easiest way to self-host the relay server is to utilize DigitalOcean's one-click deploy feature.
 However, if you prefer to host it your own way, here are the steps:
 
 1. Configure a `.env` file as according to the `.env.example`. If you don't want to host your own updates, leave `REDIRECT_UPDATES` as `"true"`.
