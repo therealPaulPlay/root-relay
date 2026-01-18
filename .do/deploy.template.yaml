@@ -1,5 +1,5 @@
 spec:
-  name: ROOT Relay
+  name: root-relay
   services:
     - name: root-relay-server
       git:
