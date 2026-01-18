@@ -19,4 +19,4 @@ However, if you prefer to host it your own way, here are the steps:
 4. Set up SSL and ensure your domain's DNS points to your server.
 5. Check if the server is running by making a `GET` request to `relay.your-domain.com/health`.
 6. In the settings of ROOT Connect, input your relay server URL.
-7. Set up your ROOT products using your own relay domain. If they are already paired, re-peat the pairing flow (you'll be prompted to skip to the relay configuration).
+7. Set up your ROOT products using your own relay domain. If they are already paired, repeat the pairing flow.
