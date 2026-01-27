@@ -182,7 +182,7 @@ app.get("/firmware/observer/update", async (req, res) => {
             try {
                 response = await s3Client.send(new GetObjectCommand({
                     Bucket: process.env.S3_BUCKET_NAME,
-                    Key: "rootprivacy/updates/latest.json"
+                    Key: "rootprivacy/updates/release/latest.json"
                 }));
             } catch (err) {
                 if (err.name === "NoSuchKey") return res.status(404).json({ error: "No update file (latest.json is missing)" });
@@ -193,7 +193,7 @@ app.get("/firmware/observer/update", async (req, res) => {
             const metadata = JSON.parse(bodyString);
 
             // Build the public URL for the RAUC bundle
-            const bundleUrl = await getPublicObjectURL(`rootprivacy/updates/${metadata.filename}`);
+            const bundleUrl = await getPublicObjectURL(`rootprivacy/updates/release/${metadata.filename}`);
 
             // Build response with RAUC-compatible format
             const firmwareInfo = {
@@ -228,7 +228,7 @@ app.get("/firmware/observer/image", async (req, res) => {
     try {
         const response = await s3Client.send(new ListObjectsV2Command({
             Bucket: process.env.S3_BUCKET_NAME,
-            Prefix: "rootprivacy/images/"
+            Prefix: "rootprivacy/images/release/"
         }));
 
         const files = (response.Contents || [])
