@@ -5,12 +5,10 @@ import requestIp from "request-ip";
 import cors from "cors";
 import { WebSocketServer, WebSocket } from "ws";
 import http from 'node:http';
-import { randomUUID } from "node:crypto";
-import { GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
-import { s3Client, getPublicObjectURL } from "./s3Client.js";
+import { decode, encode } from "cbor-x";
+import firmwareRouter from "./firmwareRouter.js";
 
 const PORT = Number(process.env.PORT) || 3013;
-const OFFICIAL_RELAY_DOMAIN = "relay.rootprivacy.com";
 
 const app = express();
 const server = http.createServer(app);
@@ -45,16 +43,17 @@ app.use((req, res, next) => {
     return standardLimiter(req, res, next);
 });
 
-const clients = {}; // WS clients
-const deviceIdClients = new Map(); // device ID -> [clientIdArray] (for connected devices like phones and laptops)
-const productIdClients = new Map(); // product ID -> [clientIdArray] (for connected root products like the Observer)
+// Routers
+app.use("/firmware", firmwareRouter);
+
+const clients = new Map(); // clientId -> Set<WebSocket>
 
 async function initWebSocketServer(server) {
     try {
         const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 3 * 1024 * 1024 }); // 3 MB message size limit
 
         // Start heartbeat
-        const heartbeatInterval = setInterval(() => {
+        setInterval(() => {
             wss.clients.forEach(ws => {
                 if (!ws.isAlive) return ws.terminate();
                 ws.isAlive = false;
@@ -63,26 +62,18 @@ async function initWebSocketServer(server) {
         }, 15000);
 
         wss.on("connection", (ws, req) => {
-            ws.clientId = randomUUID();
             ws.isAlive = true;
             ws.isTerminating = false;
             ws.messageCount = 0;
             ws.messageWindow = Date.now();
 
             const url = new URL(req.url, `http://${req.headers.host}`);
-            const deviceId = url.searchParams.get("device-id");
-            const productId = url.searchParams.get("product-id");
+            const clientId = url.searchParams.get("client-id");
+            if (!clientId) return ws.close(1008, "Missing client-id!");
 
-            // Verify query params
-            if (!deviceId && !productId) return ws.close(1008, "Missing device-id or product-id");
-            if (deviceId && productId) return ws.close(1008, "Can't provide both device-id and product-id");
-
-            // Store client in clients object and store device or product ID
-            clients[ws.clientId] = ws;
-            if (deviceId) deviceIdClients.set(deviceId, [...deviceIdClients.get(deviceId) || [], ws.clientId]);
-            if (deviceId) ws.deviceId = deviceId;
-            if (productId) productIdClients.set(productId, [...productIdClients.get(productId) || [], ws.clientId]);
-            if (productId) ws.productId = productId;
+            ws.clientId = clientId;
+            if (!clients.has(clientId)) clients.set(clientId, new Set());
+            clients.get(clientId).add(ws);
 
             ws.on('pong', () => { ws.isAlive = true; });
 
@@ -97,61 +88,40 @@ async function initWebSocketServer(server) {
                 if (ws.messageCount > 25) {
                     if (!ws.isTerminating) {
                         ws.isTerminating = true;
-                        ws.close(1008, "Rate limit exceeded");
-                        console.error(`WebSocket connection ${ws.clientId} closed due to rate limit exceeded.`);
+                        ws.close(1008, "Rate limit exceeded!");
+                        console.error(`WebSocket connection closed due to rate limit exceeded.`);
                     }
                     return;
                 }
 
                 try {
-                    const message = JSON.parse(msg);
-                    if (!["device", "product"].includes(message.target)) throw new Error("Message target is invalid!");
+                    const message = decode(msg);
+                    if (!message.targetId) throw new Error("Message lacks targetId!");
 
-                    if (message.target == "device") {
-                        if (!message.deviceId) throw new Error("Message lacks device ID!");
-                        const targets = deviceIdClients.get(message.deviceId) || [];
-                        targets.forEach((targetClientId) => {
-                            const targetWs = clients[targetClientId];
-                            if (targetWs && targetWs.readyState === WebSocket.OPEN) {
-                                targetWs.send(JSON.stringify(message));
-                            }
-                        });
-
-                    } else if (message.target == "product") {
-                        if (!message.productId) throw new Error("Message lacks product ID!");
-                        const targets = productIdClients.get(message.productId) || [];
-                        targets.forEach((targetClientId) => {
-                            const targetWs = clients[targetClientId];
-                            if (targetWs && targetWs.readyState === WebSocket.OPEN) {
-                                targetWs.send(JSON.stringify(message));
-                            }
+                    // Route to all clients with matching clientId
+                    const targets = clients.get(message.targetId);
+                    if (targets) {
+                        const encoded = encode(message);
+                        targets.forEach((targetWs) => {
+                            if (targetWs.readyState === WebSocket.OPEN) targetWs.send(encoded);
                         });
                     }
 
                 } catch (error) {
-                    console.error("Error occured in WebSocket message callback:", error);
+                    console.error("Error in WebSocket message callback:", error);
                 }
             });
 
             ws.on("close", () => {
-                // Remove client ID & remove from maps
-                delete clients[ws.clientId];
-
-                if (ws.productId) {
-                    const products = (productIdClients.get(ws.productId) || []).filter((e) => e != ws.clientId);
-                    if (products.length === 0) productIdClients.delete(ws.productId);
-                    else productIdClients.set(ws.productId, products);
-                }
-
-                if (ws.deviceId) {
-                    const devices = (deviceIdClients.get(ws.deviceId) || []).filter((e) => e != ws.clientId);
-                    if (devices.length === 0) deviceIdClients.delete(ws.deviceId);
-                    else deviceIdClients.set(ws.deviceId, devices);
+                const set = clients.get(ws.clientId);
+                if (set) {
+                    set.delete(ws);
+                    if (set.size === 0) clients.delete(ws.clientId);
                 }
             });
 
             ws.on("error", (error) => {
-                console.error(`Error in WebSocket client ${ws.clientId}:`, error);
+                console.error(`WebSocket client error:`, error);
             });
         });
 
@@ -163,95 +133,6 @@ async function initWebSocketServer(server) {
 
 initWebSocketServer(server);
 
-// Cache for firmware metadata (read from S3 latest.json)
-let firmwareMetadataCache = null;
-let firmwareCacheTime = 0;
-const FIRMWARE_CACHE_TTL = 60 * 1000; // 1 minute cache
-
-app.get("/firmware/observer/update", async (req, res) => {
-    try {
-        // If no env variable is provided, the value will not be "false" -> defaults to redirect
-        if (process.env.REDIRECT_UPDATES === "false") {
-
-            // Check cache
-            const now = Date.now();
-            if (firmwareMetadataCache && (now - firmwareCacheTime) < FIRMWARE_CACHE_TTL) return res.status(200).json(firmwareMetadataCache);
-
-            // Fetch latest.json metadata from S3
-            let response;
-            try {
-                response = await s3Client.send(new GetObjectCommand({
-                    Bucket: process.env.S3_BUCKET_NAME,
-                    Key: "rootprivacy/updates/release/latest.json"
-                }));
-            } catch (err) {
-                if (err.name === "NoSuchKey") return res.status(404).json({ error: "No update file (latest.json is missing)" });
-                throw err;
-            }
-
-            const bodyString = await response.Body.transformToString();
-            const metadata = JSON.parse(bodyString);
-
-            // Build the public URL for the RAUC bundle
-            const bundleUrl = await getPublicObjectURL(`rootprivacy/updates/release/${metadata.filename}`);
-
-            // Build response with RAUC-compatible format
-            const firmwareInfo = {
-                version: metadata.version,
-                url: bundleUrl,
-                sha256: metadata.sha256,
-                size: metadata.size || 0,
-                compatible: metadata.compatible
-            };
-
-            // Update cache
-            firmwareMetadataCache = firmwareInfo;
-            firmwareCacheTime = now;
-
-            return res.status(200).json(firmwareInfo);
-        } else {
-            // Redirect to official relay server
-            const response = await fetch(`https://${OFFICIAL_RELAY_DOMAIN}/firmware/observer/update`);
-            if (!response.ok) return res.status(response.status).json({ error: "Failed to fetch from official relay" });
-
-            const data = await response.json();
-            return res.status(200).json(data);
-        }
-
-    } catch (error) {
-        console.error("Error fetching firmware:", error);
-        return res.status(500).json({ error: "Failed to fetch firmware" });
-    }
-});
-
-app.get("/firmware/observer/image", async (req, res) => {
-    try {
-        const response = await s3Client.send(new ListObjectsV2Command({
-            Bucket: process.env.S3_BUCKET_NAME,
-            Prefix: "rootprivacy/images/release/"
-        }));
-
-        const files = (response.Contents || [])
-            .map(obj => obj.Key)
-            .filter(key => key.endsWith(".img.gz"));
-
-        if (files.length === 0) return res.status(404).json({ error: "No firmware image available" });
-
-        const latestKey = files[0];
-        const filename = latestKey.split("/").pop();
-        const imageUrl = await getPublicObjectURL(latestKey);
-
-        return res.status(200).json({
-            url: imageUrl,
-            filename: filename
-        });
-
-    } catch (error) {
-        console.error("Error fetching firmware image URL:", error);
-        return res.status(500).json({ error: "Failed to fetch firmware image" });
-    }
-});
-
 // Health check
 app.get("/health", (req, res) => {
     return res.status(200).json({ message: "Server is operational." });
@@ -259,4 +140,11 @@ app.get("/health", (req, res) => {
 
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    clients.forEach((sockets) => sockets.forEach((ws) => ws.close()));
+    server.close();
+    process.exit(0);
 });
