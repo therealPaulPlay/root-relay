@@ -80,14 +80,13 @@ firmwareRouter.get("/observer/image", async (req, res) => {
 
         if (files.length === 0) return res.status(404).json({ error: "No firmware image available!" });
 
-        const latestKey = files[0].Key;
-        const filename = latestKey.split("/").pop();
-        const imageUrl = await getPublicObjectURL(latestKey);
+        const images = await Promise.all(files.map(async (file) => {
+            const filename = file.Key.split("/").pop();
+            const url = await getPublicObjectURL(file.Key);
+            return { url, filename };
+        }));
 
-        return res.status(200).json({
-            url: imageUrl,
-            filename: filename
-        });
+        return res.status(200).json({ images });
 
     } catch (error) {
         console.error("Error fetching firmware image URL:", error);
