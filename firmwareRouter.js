@@ -1,8 +1,7 @@
 import express from "express";
 import { GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { s3Client, getPublicObjectURL } from "./s3Client.js";
-
-const OFFICIAL_RELAY_DOMAIN = "relay.rootprivacy.com";
+import { OFFICIAL_RELAY_DOMAIN } from "./config.js";
 
 // Cache for firmware metadata (read from S3 latest.json)
 let firmwareMetadataCache = null;
@@ -55,10 +54,8 @@ firmwareRouter.get("/observer/update", async (req, res) => {
         } else {
             // Redirect to official relay server
             const response = await fetch(`https://${OFFICIAL_RELAY_DOMAIN}/firmware/observer/update`);
-            if (!response.ok) return res.status(response.status).json({ error: "Failed to fetch from official relay!" });
-
-            const data = await response.json();
-            return res.status(200).json(data);
+            const data = await response.json().catch(() => ({ error: "Official relay returned invalid JSON!" }));
+            return res.status(response.status).json(data);
         }
 
     } catch (error) {

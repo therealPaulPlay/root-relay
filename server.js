@@ -7,6 +7,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import http from 'node:http';
 import { decode, encode } from "cbor-x";
 import firmwareRouter from "./firmwareRouter.js";
+import notificationRouter from "./notificationRouter.js";
 
 const PORT = Number(process.env.PORT) || 3013;
 
@@ -45,6 +46,7 @@ app.use((req, res, next) => {
 
 // Routers
 app.use("/firmware", firmwareRouter);
+app.use("/notifications", notificationRouter);
 
 const clients = new Map(); // clientId -> Set<WebSocket>
 
@@ -96,7 +98,7 @@ async function initWebSocketServer(server) {
 
                 try {
                     const message = decode(msg);
-                    if (!message.targetId) throw new Error("Message lacks targetId!");
+                    if (!message.targetId) throw new Error("Message lacks targetId");
 
                     // Route to all clients with matching clientId
                     const targets = clients.get(message.targetId);
