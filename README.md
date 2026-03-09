@@ -13,7 +13,7 @@ direclty in the browser (simply append it to the URL). You should get a positive
 The easiest way to self-host the relay server is to utilize DigitalOcean's one-click deploy feature.
 However, if you prefer to host it your own way, here are the steps:
 
-1. Configure a `.env` file as according to the `.env.example`. If you don't want to host your own updates, leave `REDIRECT_UPDATES` as `"true"`.
+1. Configure a `.env` file as according to the `.env.example`. If you don't want to host your own update bundles and your own notification service, leave `REDIRECT_UPDATES` and `REDIRECT_NOTIFICATIONS` as `"true"`.
 2. Host the application using `Docker`. A `Dockerfile` is provided. 
 3. Use a webserver such as `nginx` to route your chosen relay domain (e.g. relay.your-domain.com) to the relay server's port. By default, that port is `3013`.
 4. Set up SSL and ensure your domain's DNS points to your server.
