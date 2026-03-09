@@ -126,6 +126,7 @@ notificationRouter.post("/upload-preview", imageUploadLimiter, express.raw({ typ
                 ContentLength: req.body.length,
                 ContentType: "application/octet-stream",
                 CacheControl: "no-store",
+                ACL: "public-read",
             }));
 
             const url = await getPublicObjectURL(key);
