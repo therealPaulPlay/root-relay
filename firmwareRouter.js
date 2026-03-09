@@ -2,15 +2,20 @@ import express from "express";
 import { GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { s3Client, getPublicObjectURL } from "./s3Client.js";
 import { OFFICIAL_RELAY_DOMAIN } from "./config.js";
+import { standardLimiter } from "./rateLimiters.js";
+
+const firmwareRouter = express.Router();
+
+const UPDATES_PREFIX = "rootprivacy/updates/release/";
+const IMAGES_PREFIX = "rootprivacy/images/release/";
 
 // Cache for firmware metadata (read from S3 latest.json)
 let firmwareMetadataCache = null;
 let firmwareCacheTime = 0;
 const FIRMWARE_CACHE_TTL = 60 * 1000; // 1 minute cache
 
-const firmwareRouter = express.Router();
-
-firmwareRouter.get("/observer/update", async (req, res) => {
+// Observer firmware updates
+firmwareRouter.get("/observer/update", standardLimiter, async (req, res) => {
     try {
         // If no env variable is provided, the value will not be "false" -> defaults to redirect
         if (process.env.REDIRECT_UPDATES === "false") {
@@ -24,7 +29,7 @@ firmwareRouter.get("/observer/update", async (req, res) => {
             try {
                 response = await s3Client.send(new GetObjectCommand({
                     Bucket: process.env.S3_BUCKET_NAME,
-                    Key: "rootprivacy/updates/release/latest.json"
+                    Key: `${UPDATES_PREFIX}latest.json`
                 }));
             } catch (err) {
                 if (err.name === "NoSuchKey") return res.status(404).json({ error: "No update file, latest.json is missing!" });
@@ -35,7 +40,7 @@ firmwareRouter.get("/observer/update", async (req, res) => {
             const metadata = JSON.parse(bodyString);
 
             // Build the public URL for the RAUC bundle
-            const bundleUrl = await getPublicObjectURL(`rootprivacy/updates/release/${metadata.filename}`);
+            const bundleUrl = await getPublicObjectURL(`${UPDATES_PREFIX}${metadata.filename}`);
 
             // Build response with RAUC-compatible format
             const firmwareInfo = {
@@ -64,11 +69,12 @@ firmwareRouter.get("/observer/update", async (req, res) => {
     }
 });
 
-firmwareRouter.get("/observer/image", async (req, res) => {
+// Used for downloading the current Observer firmware image from the ROOT website
+firmwareRouter.get("/observer/image", standardLimiter, async (req, res) => {
     try {
         const response = await s3Client.send(new ListObjectsV2Command({
             Bucket: process.env.S3_BUCKET_NAME,
-            Prefix: "rootprivacy/images/release/"
+            Prefix: IMAGES_PREFIX
         }));
 
         const files = (response.Contents || [])

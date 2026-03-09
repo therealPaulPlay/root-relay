@@ -1,27 +1,22 @@
 import express from "express";
-import { createSign } from "node:crypto";
+import { randomUUID, createSign } from "node:crypto";
+import { PutObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
+import { s3Client, getPublicObjectURL } from "./s3Client.js";
+import { imageUploadLimiter, standardLimiter } from "./rateLimiters.js";
 import { OFFICIAL_RELAY_DOMAIN } from "./config.js";
 
 const notificationRouter = express.Router();
 
-// Takes a message and fcmToken, and utilizes the Firebase FCM API to 
-// send the notification to the desired device
-notificationRouter.post("/send", async (req, res) => {
+const PREVIEW_MAX_BYTES = 100 * 1024; // 100 KB
+const PREVIEW_PREFIX = "rootprivacy/notification-previews/";
+
+// Takes an FCM message payload and sends it via the Firebase FCM API
+notificationRouter.post("/send", standardLimiter, async (req, res) => {
     try {
-        const { fcmToken, message } = req.body;
-        if (!fcmToken || !message) return res.status(400).json({ error: "Missing required fields: fcmToken, message" });
+        const { message } = req.body;
+        if (!message) return res.status(400).json({ error: "Missing required field: message" });
 
-        // Forward to the official server
-        if (process.env.REDIRECT_NOTIFICATIONS !== "false") {
-            const response = await fetch(`https://${OFFICIAL_RELAY_DOMAIN}/notifications/send`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(req.body),
-            });
-            const data = await response.json().catch(() => ({ error: "Official relay returned invalid JSON!" }));
-            return res.status(response.status).json(data);
-
-        } else {
+        if (process.env.REDIRECT_NOTIFICATIONS === "false") {
             // Send via FCM HTTP v1 API
             const accessToken = await getAccessToken();
             if (!accessToken) return res.status(500).json({ error: "Failed to obtain FCM access token!" });
@@ -45,6 +40,15 @@ notificationRouter.post("/send", async (req, res) => {
             }
 
             return res.status(200).json({ success: true });
+        } else {
+            // Forward to the official server
+            const response = await fetch(`https://${OFFICIAL_RELAY_DOMAIN}/notifications/send`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(req.body),
+            });
+            const data = await response.json().catch(() => ({ error: "Official relay returned invalid JSON!" }));
+            return res.status(response.status).json(data);
         }
     } catch (error) {
         console.error("Error sending notification:", error);
@@ -103,5 +107,80 @@ async function getAccessToken() {
         return null;
     }
 }
+
+// Upload an encrypted notification preview image to S3
+// Returns a URL that can be included in the notification payload
+notificationRouter.post("/upload-preview", imageUploadLimiter, express.raw({ type: "application/octet-stream", limit: PREVIEW_MAX_BYTES }), async (req, res) => {
+    try {
+        // Encrypted data must be at least nonce (12) + tag (16) + 1 byte
+        if (!req.body?.length || req.body.length < 29) return res.status(400).json({ error: "Payload too small to be valid encrypted data!" });
+
+        if (process.env.REDIRECT_NOTIFICATIONS === "false") {
+            const id = randomUUID();
+            const key = `${PREVIEW_PREFIX}${id}`;
+
+            await s3Client.send(new PutObjectCommand({
+                Bucket: process.env.S3_BUCKET_NAME,
+                Key: key,
+                Body: req.body,
+                ContentLength: req.body.length,
+                ContentType: "application/octet-stream",
+                CacheControl: "no-store",
+            }));
+
+            const url = await getPublicObjectURL(key);
+            return res.status(200).json({ url });
+        } else {
+            // Forward to the official server
+            const response = await fetch(`https://${OFFICIAL_RELAY_DOMAIN}/notifications/upload-preview`, {
+                method: "POST",
+                headers: { "Content-Type": "application/octet-stream" },
+                body: req.body,
+            });
+            const data = await response.json().catch(() => ({ error: "Official relay returned invalid JSON!" }));
+            return res.status(response.status).json(data);
+        }
+    } catch (error) {
+        console.error("Error uploading notification image:", error);
+        return res.status(500).json({ error: "Failed to upload preview image!" });
+    }
+});
+
+// Clean up expired notification preview images every hour
+const IMAGE_MAX_AGE_MS = 48 * 60 * 60 * 1000; // 48 hours
+
+async function cleanupExpiredPreviews() {
+    try {
+        const cutoff = new Date(Date.now() - IMAGE_MAX_AGE_MS);
+        let continuationToken;
+        let totalDeleted = 0;
+
+        do {
+            const response = await s3Client.send(new ListObjectsV2Command({
+                Bucket: process.env.S3_BUCKET_NAME,
+                Prefix: PREVIEW_PREFIX,
+                ContinuationToken: continuationToken,
+            }));
+
+            const expired = (response.Contents || []).filter((obj) => obj.LastModified < cutoff);
+            if (expired.length > 0) {
+                await s3Client.send(new DeleteObjectsCommand({
+                    Bucket: process.env.S3_BUCKET_NAME,
+                    Delete: { Objects: expired.map((obj) => ({ Key: obj.Key })) },
+                }));
+                totalDeleted += expired.length;
+            }
+
+            continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
+        } while (continuationToken);
+
+        if (totalDeleted > 0) console.log(`Cleaned up ${totalDeleted} expired notification preview(s).`);
+    } catch (error) {
+        console.error("Error cleaning up notification previews:", error);
+    }
+}
+
+// Only run cleanup when this server owns the S3 storage
+if (process.env.REDIRECT_NOTIFICATIONS === "false") setInterval(cleanupExpiredPreviews, 60 * 60 * 1000);
 
 export default notificationRouter;

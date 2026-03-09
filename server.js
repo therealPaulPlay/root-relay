@@ -1,11 +1,11 @@
 import "dotenv/config";
 import express from "express";
-import rateLimit from "express-rate-limit";
 import requestIp from "request-ip";
 import cors from "cors";
 import { WebSocketServer, WebSocket } from "ws";
 import http from 'node:http';
 import { decode, encode } from "cbor-x";
+import { upgradeLimiter } from "./rateLimiters.js";
 import firmwareRouter from "./firmwareRouter.js";
 import notificationRouter from "./notificationRouter.js";
 
@@ -13,21 +13,6 @@ const PORT = Number(process.env.PORT) || 3013;
 
 const app = express();
 const server = http.createServer(app);
-
-// 5 requests per second
-const standardLimiter = rateLimit({
-    windowMs: 1000,
-    keyGenerator: (req) => req.clientIp,
-    max: 5,
-    message: { error: 'Too many standard requests.' }
-});
-
-const upgradeLimiter = rateLimit({
-    windowMs: 1000,
-    keyGenerator: (req) => req.clientIp,
-    max: 5,
-    message: { error: 'Too many WebSocket upgrade requests.' }
-});
 
 // Allow requests from the ROOT website
 app.use(cors({
@@ -39,9 +24,11 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(requestIp.mw());
+
+// Rate-limit WebSocket upgrade requests (HTTP routes have per-route limiters)
 app.use((req, res, next) => {
     if (req.headers.upgrade === 'websocket') return upgradeLimiter(req, res, next);
-    return standardLimiter(req, res, next);
+    next();
 });
 
 // Routers
