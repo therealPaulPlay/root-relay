@@ -123,9 +123,9 @@ async function initWebSocketServer(server) {
 initWebSocketServer(server);
 
 // Health check
-app.get("/health", (req, res) => {
-    return res.status(200).json({ message: "Server is operational." });
-});
+const healthCheck = (req, res) => res.status(200).json({ message: "Server is operational." });
+app.get("/", healthCheck);
+app.get("/health", healthCheck);
 
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
