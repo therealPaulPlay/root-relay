@@ -6,8 +6,8 @@ import { standardLimiter } from "./rateLimiters.js";
 
 const firmwareRouter = express.Router();
 
-const UPDATES_PREFIX = "rootprivacy/updates/";
-const IMAGES_PREFIX = "rootprivacy/images/release/";
+const UPDATES_PREFIX = "rootprivacy/firmware/observer/updates/";
+const IMAGES_PREFIX = "rootprivacy/firmware/observer/images/";
 
 // Per-channel cache for firmware update metadata (read from S3 latest.json)
 const firmwareUpdateCache = {};
@@ -80,7 +80,7 @@ firmwareRouter.get("/observer/image", standardLimiter, async (req, res) => {
     try {
         const response = await s3Client.send(new ListObjectsV2Command({
             Bucket: process.env.S3_BUCKET_NAME,
-            Prefix: IMAGES_PREFIX
+            Prefix: IMAGES_PREFIX + "release/"
         }));
 
         const files = (response.Contents || [])
