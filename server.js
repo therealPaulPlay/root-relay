@@ -14,7 +14,7 @@ const PORT = Number(process.env.PORT) || 3013;
 const app = express();
 const server = http.createServer(app);
 
-// Allow requests from the ROOT website
+// Set up CORS to allow requests from the website
 app.use(cors({
     origin: [
         "http://localhost:3000",
@@ -67,7 +67,7 @@ async function initWebSocketServer(server) {
             ws.on('pong', () => { ws.isAlive = true; });
 
             ws.on("message", (msg) => {
-                // Rate limiting: 50 messages per second
+                // Rate limit to 50 messages/s
                 const now = Date.now();
                 if (now - ws.messageWindow > 1000) {
                     ws.messageWindow = now;
@@ -78,7 +78,7 @@ async function initWebSocketServer(server) {
                     if (!ws.isTerminating) {
                         ws.isTerminating = true;
                         ws.close(1008, "Rate limit exceeded!");
-                        console.error(`WebSocket connection closed due to rate limit exceeded.`);
+                        console.error(`WebSocket connection closed (rate limit exceeded).`);
                     }
                     return;
                 }
