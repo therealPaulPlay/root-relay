@@ -1,11 +1,10 @@
 import "dotenv/config";
 import express from "express";
-import requestIp from "request-ip";
 import cors from "cors";
 import { WebSocketServer, WebSocket } from "ws";
 import http from 'node:http';
-import { decode, encode } from "cbor-x";
-import { upgradeLimiter } from "./rateLimiters.js";
+import { decode } from "cbor-x";
+import { wsConnectionLimiter, getIp } from "./rateLimiters.js";
 import firmwareRouter from "./firmwareRouter.js";
 import notificationRouter from "./notificationRouter.js";
 
@@ -23,13 +22,6 @@ app.use(cors({
     ]
 }));
 app.use(express.json());
-app.use(requestIp.mw());
-
-// Rate-limit WebSocket upgrade requests (HTTP routes have per-route limiters)
-app.use((req, res, next) => {
-    if (req.headers.upgrade === 'websocket') return upgradeLimiter(req, res, next);
-    next();
-});
 
 // Routers
 app.use("/firmware", firmwareRouter);
@@ -39,7 +31,12 @@ const clients = new Map(); // clientId -> Set<WebSocket>
 
 async function initWebSocketServer(server) {
     try {
-        const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 3 * 1024 * 1024 }); // 3 MB message size limit
+        const wss = new WebSocketServer({
+            server,
+            path: '/ws',
+            maxPayload: 3 * 1024 * 1024, // 3 MB message size limit
+            verifyClient: (info, done) => done(!wsConnectionLimiter.isFull(info.req), 429, "Too many connections from this IP!"),
+        });
 
         // Start heartbeat
         setInterval(() => {
@@ -59,6 +56,8 @@ async function initWebSocketServer(server) {
             const url = new URL(req.url, `http://${req.headers.host}`);
             const clientId = url.searchParams.get("client-id");
             if (!clientId) return ws.close(1008, "Missing client-id!");
+
+            const ip = wsConnectionLimiter.register(req);
 
             ws.clientId = clientId;
             if (!clients.has(clientId)) clients.set(clientId, new Set());
@@ -87,12 +86,11 @@ async function initWebSocketServer(server) {
                     const message = decode(msg);
                     if (!message.targetId) throw new Error("Message lacks targetId");
 
-                    // Route to all clients with matching clientId
+                    // Route the original buffer to all clients with matching clientId
                     const targets = clients.get(message.targetId);
                     if (targets) {
-                        const encoded = encode(message);
                         targets.forEach((targetWs) => {
-                            if (targetWs.readyState === WebSocket.OPEN) targetWs.send(encoded);
+                            if (targetWs.readyState === WebSocket.OPEN) targetWs.send(msg);
                         });
                     }
 
@@ -102,6 +100,7 @@ async function initWebSocketServer(server) {
             });
 
             ws.on("close", () => {
+                wsConnectionLimiter.release(ip);
                 const set = clients.get(ws.clientId);
                 if (set) {
                     set.delete(ws);
@@ -123,7 +122,7 @@ async function initWebSocketServer(server) {
 initWebSocketServer(server);
 
 // Health check
-const healthCheck = (req, res) => res.status(200).json({ message: "Server is operational." });
+const healthCheck = (req, res) => res.status(200).json({ message: "Server is operational.", yourIp: getIp(req) });
 app.get("/", healthCheck);
 app.get("/health", healthCheck);
 

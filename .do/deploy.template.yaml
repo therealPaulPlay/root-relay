@@ -8,5 +8,8 @@ spec:
       dockerfile_path: Dockerfile
       instance_count: 1
       instance_size_slug: apps-s-1vcpu-0.5gb
+      envs:
+        - key: CLIENT_IP_HEADER
+          value: do-connecting-ip
 
 

@@ -15,8 +15,11 @@ However, if you prefer to host it your own way, here are the steps:
 
 1. Configure a `.env` file as according to the `.env.example`. If you don't want to host your own update bundles and your own notification service, leave `REDIRECT_UPDATES` and `REDIRECT_NOTIFICATIONS` as `"true"`.
 2. Host the application using `Docker`. A `Dockerfile` is provided. 
-3. Use a webserver such as `nginx` to route your chosen relay domain (e.g. relay.your-domain.com) to the relay server's port. By default, that port is `3013`.
+3. Use a webserver such as `nginx` to route your chosen relay domain (e.g. relay.your-domain.com) to the relay server's port. By default, that port is `3013`. One reverse proxy is the default configuration (see `TRUSTED_PROXIES_COUNT` in `config.js` and `CLIENT_IP_HEADER` in `.env.example`), adjust if needed to ensure IPs are extracted correctly.
 4. Set up SSL and ensure your domain's DNS points to your server.
 5. Check if the server is running by making a `GET` request to `relay.your-domain.com/health`.
 6. In the settings of ROOT Connect, input your relay server URL.
 7. Set up your ROOT products using your own relay domain. If they are already paired, repeat the pairing flow.
+
+> [!TIP]
+> Use the `/health` endpoint to see if the server is running and whether the `yourIp` field matches your actual IP.
