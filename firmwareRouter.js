@@ -33,7 +33,7 @@ async function handleFirmwareUpdate(channel, req, res) {
                     Key: `${channelPrefix}latest.json`
                 }));
             } catch (err) {
-                if (err.name === "NoSuchKey") return res.status(404).json({ error: "No update file, latest.json is missing!" });
+                if (err.name === "NoSuchKey") return res.status(404).json({ error: "No update file, latest.json is missing" });
                 throw err;
             }
 
@@ -59,7 +59,7 @@ async function handleFirmwareUpdate(channel, req, res) {
         } else {
             // Redirect to official relay server
             const response = await fetch(`https://${OFFICIAL_RELAY_DOMAIN}/firmware/observer/update${channel !== "release" ? `/${channel}` : ""}`);
-            const data = await response.json().catch(() => ({ error: "Official relay returned invalid JSON!" }));
+            const data = await response.json().catch(() => ({ error: "Official relay returned invalid JSON" }));
             return res.status(response.status).json(data);
         }
 
@@ -87,7 +87,7 @@ firmwareRouter.get("/observer/image", standardLimiter, async (req, res) => {
             .filter(obj => obj.Key.endsWith(".img.gz"))
             .sort((a, b) => b.LastModified - a.LastModified);
 
-        if (files.length === 0) return res.status(404).json({ error: "No firmware image available!" });
+        if (files.length === 0) return res.status(404).json({ error: "No firmware image available" });
 
         const images = await Promise.all(files.map(async (file) => {
             const filename = file.Key.split("/").pop();
@@ -99,7 +99,7 @@ firmwareRouter.get("/observer/image", standardLimiter, async (req, res) => {
 
     } catch (error) {
         console.error("Error fetching firmware image URL:", error);
-        return res.status(500).json({ error: "Failed to fetch firmware image!" });
+        return res.status(500).json({ error: "Failed to fetch firmware image" });
     }
 });
 

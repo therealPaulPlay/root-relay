@@ -14,12 +14,12 @@ const PREVIEW_PREFIX = "rootprivacy/notification-previews/";
 notificationRouter.post("/send", standardLimiter, async (req, res) => {
     try {
         const { message } = req.body;
-        if (!message) return res.status(400).json({ error: "Missing required field: message" });
+        if (!message) return res.status(400).json({ error: "Missing required message field" });
 
         if (process.env.REDIRECT_NOTIFICATIONS === "false") {
             // Send via FCM HTTP v1 API
             const accessToken = await getAccessToken();
-            if (!accessToken) return res.status(500).json({ error: "Failed to obtain FCM access token!" });
+            if (!accessToken) return res.status(500).json({ error: "Failed to obtain FCM access token" });
 
             const fcmResponse = await fetch(
                 `https://fcm.googleapis.com/v1/projects/${process.env.FCM_PROJECT_ID}/messages:send`,
@@ -36,7 +36,7 @@ notificationRouter.post("/send", standardLimiter, async (req, res) => {
             if (!fcmResponse.ok) {
                 const errorData = await fcmResponse.json().catch(() => ({}));
                 console.error("FCM send failed:", fcmResponse.status, errorData);
-                return res.status(fcmResponse.status).json({ error: "FCM send failed!", details: errorData });
+                return res.status(fcmResponse.status).json({ error: "FCM send failed", details: errorData });
             }
 
             return res.status(200).json({ success: true });
@@ -47,12 +47,12 @@ notificationRouter.post("/send", standardLimiter, async (req, res) => {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(req.body),
             });
-            const data = await response.json().catch(() => ({ error: "Official relay returned invalid JSON!" }));
+            const data = await response.json().catch(() => ({ error: "Official relay returned invalid JSON" }));
             return res.status(response.status).json(data);
         }
     } catch (error) {
         console.error("Error sending notification:", error);
-        return res.status(500).json({ error: "Failed to send notification!" });
+        return res.status(500).json({ error: "Failed to send notification" });
     }
 });
 
@@ -113,7 +113,7 @@ async function getAccessToken() {
 notificationRouter.post("/upload-preview", imageUploadLimiter, express.raw({ type: "application/octet-stream", limit: PREVIEW_MAX_BYTES }), async (req, res) => {
     try {
         // Encrypted data must be at least nonce (12) + tag (16) + 1 byte
-        if (!req.body?.length || req.body.length < 29) return res.status(400).json({ error: "Payload too small to be valid encrypted data!" });
+        if (!req.body?.length || req.body.length < 29) return res.status(400).json({ error: "Payload too small to be valid encrypted data" });
 
         if (process.env.REDIRECT_NOTIFICATIONS === "false") {
             const id = randomUUID();
@@ -138,12 +138,12 @@ notificationRouter.post("/upload-preview", imageUploadLimiter, express.raw({ typ
                 headers: { "Content-Type": "application/octet-stream" },
                 body: req.body,
             });
-            const data = await response.json().catch(() => ({ error: "Official relay returned invalid JSON!" }));
+            const data = await response.json().catch(() => ({ error: "Official relay returned invalid JSON" }));
             return res.status(response.status).json(data);
         }
     } catch (error) {
         console.error("Error uploading notification image:", error);
-        return res.status(500).json({ error: "Failed to upload preview image!" });
+        return res.status(500).json({ error: "Failed to upload preview image" });
     }
 });
 

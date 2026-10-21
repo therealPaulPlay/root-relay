@@ -12,7 +12,7 @@ export const standardLimiter = rateLimit({
     windowMs: 1000,
     keyGenerator: getIp,
     max: 10,
-    message: { error: "Too many requests." },
+    message: { error: "Too many requests" },
 });
 
 // Limit open WebSocket connections per IP (upgrades bypass Express, hence the connection handler calls this directly)
@@ -41,5 +41,5 @@ export const imageUploadLimiter = rateLimit({
     windowMs: 10_000,
     keyGenerator: getIp,
     max: 5,
-    message: { error: "Too many image uploads." },
+    message: { error: "Too many image uploads" },
 });
